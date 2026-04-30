@@ -194,6 +194,18 @@ Open:
 
 The frontend expects the backend on `http://127.0.0.1:8000` during local development.
 
+## Frontend Deployment
+
+For a hosted frontend such as Vercel, the React app needs a deployed backend URL.
+
+Set this environment variable in the frontend deployment:
+
+```bash
+VITE_API_BASE=https://your-backend.example.com
+```
+
+Without `VITE_API_BASE`, production builds fall back to same-origin `/api/*` requests, which only works if the backend is deployed behind the same domain.
+
 ## Notes
 
 - NASA POWER is used for observational weather context, not forecast generation.

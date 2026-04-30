@@ -2,7 +2,7 @@
 
 FarmPulse is an institutional crop-risk intelligence platform for Indian agriculture. The product vision is to detect crop stress early, before visible damage becomes obvious, and route those signals to the organizations that can act on them first: agriculture departments, insurers, FPOs, and field extension networks.
 
-This repository contains the current working prototype built for the ET GenAI Hackathon 2026. The implementation is centered on district-level early warning, institutional response workflows, and an auditable backend pipeline powered by real environmental data.
+The implementation is centered on district-level early warning, institutional response workflows, and an auditable backend pipeline powered by real environmental data.
 
 ## Product Context
 

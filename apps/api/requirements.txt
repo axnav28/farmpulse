@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+pydantic
+httpx
+python-dotenv
+python-multipart
+faster-whisper
+edge-tts
+Pillow

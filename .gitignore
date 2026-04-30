@@ -19,6 +19,7 @@ credentials.json
 # Build output
 apps/web/dist/
 build/
+apps/web/.vercel/
 
 # Runtime data
 apps/api/farmpulse.db

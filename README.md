@@ -206,6 +206,31 @@ VITE_API_BASE=https://your-backend.example.com
 
 Without `VITE_API_BASE`, production builds fall back to same-origin `/api/*` requests, which only works if the backend is deployed behind the same domain.
 
+## Backend Deployment On Render
+
+This repo includes a root [render.yaml](/Users/arnav/Documents/FarmPulse/render.yaml:1) so Render can import the FastAPI backend directly from GitHub.
+
+The backend service is configured with:
+
+- root directory: `apps/api`
+- build command: `pip install -r requirements.txt`
+- start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+- health check path: `/health`
+
+Recommended next step in Render:
+
+1. Open your Render project.
+2. Create or sync a Blueprint from this GitHub repo.
+3. Confirm the web service uses the settings above.
+4. Deploy and copy the resulting `onrender.com` URL.
+5. Set `VITE_API_BASE` in the Vercel frontend project to that backend URL.
+
+Example:
+
+```bash
+VITE_API_BASE=https://farmpulse-api.onrender.com
+```
+
 ## Notes
 
 - NASA POWER is used for observational weather context, not forecast generation.

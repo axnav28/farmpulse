@@ -1,12 +1,12 @@
-# FarmPulse
+# FarmPulse AI
 
-FarmPulse is an institutional crop-risk intelligence platform for Indian agriculture. The product vision is to detect crop stress early, before visible damage becomes obvious, and route those signals to the organizations that can act on them first: agriculture departments, insurers, FPOs, and field extension networks.
+FarmPulse AI is an institutional crop-risk intelligence platform for Indian agriculture. The product vision is to detect crop stress early, before visible damage becomes obvious, and route those signals to the organizations that can act on them first: agriculture departments, insurers, FPOs, and field extension networks.
 
 The implementation is centered on district-level early warning, institutional response workflows, and an auditable backend pipeline powered by real environmental data.
 
 ## Product Context
 
-FarmPulse is built around a simple operating assumption: many farmers should benefit from better crop intelligence without being forced to use an app, own a smartphone, or interact directly with a digital system.
+FarmPulse AI is built around a simple operating assumption: many farmers should benefit from better crop intelligence without being forced to use an app, own a smartphone, or interact directly with a digital system.
 
 Instead of building a farmer-first app workflow, the current product is designed around institutional delivery:
 
@@ -19,7 +19,7 @@ Instead of building a farmer-first app workflow, the current product is designed
 
 Indian agriculture often reacts to crop stress too late. By the time visible field damage is obvious, the best prevention window may already be narrowing. Broad advisories issued at district or state level are often not specific enough, while many technology-heavy solutions depend on farmer-side apps, devices, or workflows that do not scale cleanly across smallholder contexts.
 
-FarmPulse is intended to shift that model from reactive response to earlier institutional action.
+FarmPulse AI is intended to shift that model from reactive response to earlier institutional action.
 
 ## What Is Actually Implemented Today
 
@@ -51,9 +51,6 @@ Not currently exposed as a real end-user website feature:
 - real farmer messaging dispatch
 - live mandi price workflows
 - production field operations integrations
-- fully wired voice/TTS experience in the frontend
-
-The backend contains speech-related endpoints, but the current website is primarily an institutional dashboard and analysis prototype, not a complete farmer communication product.
 
 ## Real Data Sources
 
@@ -69,8 +66,8 @@ These sources are combined with district crop context and heuristic risk logic t
 
 The React frontend currently exposes five main product surfaces:
 
-- `/institutional`: pan-India institutional dashboard with state prioritization, action queue, insurance signals, and CSV export
 - `/overview`: command center for running a priority scan, watching agent status, viewing recent activity, and reviewing top-level risk metrics
+- `/institutional`: pan-India institutional dashboard with state prioritization, action queue, insurance signals, and CSV export
 - `/districts`: district explorer with search, per-district report generation, reasoning chain, confidence, escalation status, and institutional advisory output
 - `/audit`: audit trail with filters and CSV export
 - `/advisories`: mock advisory operations center with seeded farmer records, multilingual message previews, and simulated delivery states
@@ -122,18 +119,10 @@ The current backend exposes endpoints for:
 - `GET /api/districts`
 - `GET /api/district/{district_id}`
 - `POST /api/analyze`
-- `POST /api/farmer-query`
 - `POST /api/simulate-edge-case`
 - `GET /api/audit-log`
 - `GET /api/audit-log/export`
 - `GET /api/stream/{run_id}`
-
-There are also speech-related endpoints in the backend:
-
-- `POST /api/transcribe-audio`
-- `POST /api/synthesize-speech`
-
-Those endpoints exist in the service layer, but they are not the core of the current website experience.
 
 ## Key Characteristics Of The Prototype
 
@@ -160,15 +149,7 @@ source .venv/bin/activate
 pip install -r apps/api/requirements.txt
 ```
 
-### 3. Optional backend environment configuration
-
-If you want to tune local speech-related settings for the backend service, copy the API env template:
-
-```bash
-cp apps/api/.env.example apps/api/.env
-```
-
-### 4. Start the backend
+### 3. Start the backend
 
 ```bash
 npm run dev:api
@@ -180,7 +161,7 @@ If watch mode is restricted in your environment, run:
 .venv/bin/python -m uvicorn apps.api.main:app --port 8000
 ```
 
-### 5. Start the frontend
+### 4. Start the frontend
 
 ```bash
 npm run dev:web
@@ -194,43 +175,6 @@ Open:
 
 The frontend expects the backend on `http://127.0.0.1:8000` during local development.
 
-## Frontend Deployment
-
-For a hosted frontend such as Vercel, the React app needs a deployed backend URL.
-
-Set this environment variable in the frontend deployment:
-
-```bash
-VITE_API_BASE=https://your-backend.example.com
-```
-
-Without `VITE_API_BASE`, production builds fall back to same-origin `/api/*` requests, which only works if the backend is deployed behind the same domain.
-
-## Backend Deployment On Render
-
-This repo includes a root [render.yaml](/Users/arnav/Documents/FarmPulse/render.yaml:1) so Render can import the FastAPI backend directly from GitHub.
-
-The backend service is configured with:
-
-- root directory: `apps/api`
-- build command: `pip install -r requirements.txt`
-- start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
-- health check path: `/health`
-
-Recommended next step in Render:
-
-1. Open your Render project.
-2. Create or sync a Blueprint from this GitHub repo.
-3. Confirm the web service uses the settings above.
-4. Deploy and copy the resulting `onrender.com` URL.
-5. Set `VITE_API_BASE` in the Vercel frontend project to that backend URL.
-
-Example:
-
-```bash
-VITE_API_BASE=https://farmpulse-api.onrender.com
-```
-
 ## Notes
 
 - NASA POWER is used for observational weather context, not forecast generation.
@@ -240,4 +184,4 @@ VITE_API_BASE=https://farmpulse-api.onrender.com
 
 ## Direction
 
-The broader FarmPulse vision still includes stronger farmer delivery channels, deeper field integrations, and larger-scale validation. This repository, however, should be understood as a focused institutional early-warning prototype with real data ingestion, explainable district analysis, and audit-ready operational outputs.
+The broader FarmPulse AI vision still includes stronger farmer delivery channels, deeper field integrations, and larger-scale validation. This repository, however, should be understood as a focused institutional early-warning prototype with real data ingestion, explainable district analysis, and audit-ready operational outputs.

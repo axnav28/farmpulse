@@ -1,15 +1,14 @@
 import asyncio
-import base64
 import csv
 import hashlib
 import html
-import tempfile
 import json
 import math
 import os
 import random
 import re
 import sqlite3
+import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
@@ -17,13 +16,10 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, Literal, Optional
 
 import httpx
-import edge_tts
 from dotenv import load_dotenv
-from faster_whisper import WhisperModel
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from PIL import Image
 from pydantic import BaseModel, Field
 
 load_dotenv()
@@ -31,43 +27,15 @@ load_dotenv()
 APP_DIR = Path(__file__).resolve().parent
 DB_PATH = APP_DIR / "farmpulse.db"
 UTC = timezone.utc
-WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "small")
-WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "auto")
-WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
-EDGE_TTS_VOICE_MARATHI = os.getenv("EDGE_TTS_VOICE_MARATHI", "mr-IN-AarohiNeural")
-EDGE_TTS_VOICE_HINDI = os.getenv("EDGE_TTS_VOICE_HINDI", "hi-IN-SwaraNeural")
-EDGE_TTS_VOICE_PUNJABI = os.getenv("EDGE_TTS_VOICE_PUNJABI", "pa-IN-OjasNeural")
-EDGE_TTS_VOICE_ENGLISH = os.getenv("EDGE_TTS_VOICE_ENGLISH", "en-IN-NeerjaNeural")
-EDGE_TTS_VOICE_BENGALI = os.getenv("EDGE_TTS_VOICE_BENGALI", "bn-IN-TanishaaNeural")
-EDGE_TTS_VOICE_GUJARATI = os.getenv("EDGE_TTS_VOICE_GUJARATI", "gu-IN-DhwaniNeural")
-EDGE_TTS_VOICE_TAMIL = os.getenv("EDGE_TTS_VOICE_TAMIL", "ta-IN-PallaviNeural")
-EDGE_TTS_VOICE_TELUGU = os.getenv("EDGE_TTS_VOICE_TELUGU", "te-IN-ShrutiNeural")
-EDGE_TTS_VOICE_KANNADA = os.getenv("EDGE_TTS_VOICE_KANNADA", "kn-IN-SapnaNeural")
-EDGE_TTS_VOICE_MALAYALAM = os.getenv("EDGE_TTS_VOICE_MALAYALAM", "ml-IN-SobhanaNeural")
 HTTP_TIMEOUT_SECONDS = 12.0
+AGGREGATE_CACHE_TTL_SECONDS = int(os.getenv("AGGREGATE_CACHE_TTL_SECONDS", "300"))
 NASA_POWER_BASE = "https://power.larc.nasa.gov/api/temporal/daily/point"
 NASA_GIBS_WMS = "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi"
 NASA_GIBS_NDVI_COLORMAP = "https://gibs.earthdata.nasa.gov/colormaps/v1.0/output/MODIS_NDVI.html"
 OPEN_METEO_BASE = "https://api.open-meteo.com/v1/forecast"
-WHISPER_TRANSCRIBE_MODEL = "faster-whisper"
-EDGE_TTS_MODEL = "edge-tts"
 
 RiskCategory = Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
 AgentStatus = Literal["IDLE", "RUNNING", "COMPLETE", "ERROR"]
-
-SUPPORTED_LANGUAGES = {
-    "Auto",
-    "English",
-    "Hindi",
-    "Marathi",
-    "Punjabi",
-    "Bengali",
-    "Gujarati",
-    "Tamil",
-    "Telugu",
-    "Kannada",
-    "Malayalam",
-}
 
 
 class DistrictRecord(BaseModel):
@@ -106,14 +74,8 @@ class AnalyzeRequest(BaseModel):
     crop: str
     language: str = "Hindi"
     farmer_query: str = ""
-    phone_type: Literal["smartphone", "feature-phone"] = "smartphone"
-    channel: Literal["dashboard", "farmer", "institutional"] = "dashboard"
     run_id: Optional[str] = None
     edge_case: Optional[Literal["unknown_crop", "data_staleness", "multi_stressor_conflict"]] = None
-
-
-class FarmerQueryRequest(AnalyzeRequest):
-    channel: Literal["farmer", "dashboard", "institutional"] = "farmer"
 
 
 class EdgeCaseRequest(BaseModel):
@@ -131,7 +93,6 @@ class FarmPulseState(BaseModel):
     crop: str
     language: str
     farmer_query: str
-    phone_type: str
     edge_case: Optional[str] = None
     ndvi_score: float = 0.0
     ndvi_baseline: float = 0.0
@@ -161,7 +122,6 @@ class FarmPulseState(BaseModel):
     data_sources: list[str] = Field(default_factory=list)
     phi_compliant: bool = True
     crop_supported: bool = True
-    input_source: str = "manual"
 
 
 class AuditEntry(BaseModel):
@@ -274,6 +234,7 @@ LAST_KNOWN_WEATHER: dict[str, WeatherData] = {}
 LAST_KNOWN_MODIS: dict[str, dict[str, Any]] = {}
 RUN_QUEUES: dict[str, asyncio.Queue[str]] = {}
 MODIS_NDVI_PALETTE: list[tuple[tuple[int, int, int], float]] = []
+AGGREGATE_CACHE: dict[str, Any] = {"expires_at": 0.0, "payload": None}
 
 
 def seed_for(*parts: str) -> int:
@@ -346,148 +307,6 @@ def normalize_language(language: str | None, district_language: str = "Hindi") -
     if not cleaned:
         return district_language
     return aliases.get(cleaned, district_language)
-
-
-def detect_language_from_text(text: str, district_language: str = "Hindi") -> str:
-    if not text.strip():
-        return district_language
-    for char in text:
-        code = ord(char)
-        if 0x0A00 <= code <= 0x0A7F:
-            return "Punjabi"
-        if 0x0980 <= code <= 0x09FF:
-            return "Bengali"
-        if 0x0A80 <= code <= 0x0AFF:
-            return "Gujarati"
-        if 0x0B80 <= code <= 0x0BFF:
-            return "Tamil"
-        if 0x0C00 <= code <= 0x0C7F:
-            return "Telugu"
-        if 0x0C80 <= code <= 0x0CFF:
-            return "Kannada"
-        if 0x0D00 <= code <= 0x0D7F:
-            return "Malayalam"
-        if 0x0900 <= code <= 0x097F:
-            return district_language if district_language in {"Hindi", "Marathi"} else "Hindi"
-    if any("a" <= ch.lower() <= "z" for ch in text):
-        return "English"
-    return district_language
-
-
-def whisper_language_name(code: str, district_language: str = "Hindi") -> str:
-    mapping = {
-        "mr": "Marathi",
-        "hi": "Hindi",
-        "pa": "Punjabi",
-        "en": "English",
-        "bn": "Bengali",
-        "gu": "Gujarati",
-        "ta": "Tamil",
-        "te": "Telugu",
-        "kn": "Kannada",
-        "ml": "Malayalam",
-    }
-    return mapping.get((code or "").split("-")[0], district_language)
-
-
-def language_code(language: str) -> str | None:
-    return {
-        "Marathi": "mr",
-        "Hindi": "hi",
-        "Punjabi": "pa",
-        "English": "en",
-        "Bengali": "bn",
-        "Gujarati": "gu",
-        "Tamil": "ta",
-        "Telugu": "te",
-        "Kannada": "kn",
-        "Malayalam": "ml",
-        "Auto": None,
-    }.get(language, "en")
-
-
-def resolve_language(language: str, query: str, district_language: str) -> str:
-    normalized = normalize_language(language, district_language)
-    if normalized == "Auto":
-        return detect_language_from_text(query, district_language)
-    return normalized
-
-
-def load_whisper_model() -> WhisperModel:
-    return WhisperModel(
-        WHISPER_MODEL_SIZE,
-        device=WHISPER_DEVICE,
-        compute_type=WHISPER_COMPUTE_TYPE,
-        download_root=str(APP_DIR / ".models" / "whisper"),
-    )
-
-
-async def transcribe_audio_bytes(audio_bytes: bytes, filename: str, language: str, district_language: str) -> tuple[str, str]:
-    suffix = Path(filename).suffix or ".webm"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as audio_file:
-        audio_file.write(audio_bytes)
-        temp_path = Path(audio_file.name)
-
-    chosen_language = normalize_language(language, district_language)
-    explicit_code = language_code(chosen_language)
-
-    try:
-        model = load_whisper_model()
-        segments, info = model.transcribe(
-            str(temp_path),
-            language=explicit_code,
-            vad_filter=True,
-            beam_size=1,
-        )
-        transcript = " ".join(segment.text.strip() for segment in segments if segment.text.strip()).strip()
-        detected_language = whisper_language_name(getattr(info, "language", ""), district_language)
-    finally:
-        temp_path.unlink(missing_ok=True)
-
-    if not transcript:
-        raise HTTPException(status_code=502, detail="No transcript returned by Whisper")
-
-    if chosen_language == "Auto":
-        detected_language = detect_language_from_text(transcript, detected_language)
-    else:
-        detected_language = chosen_language
-
-    return transcript, detected_language
-
-
-def edge_voice_for(language: str) -> str:
-    return {
-        "Marathi": EDGE_TTS_VOICE_MARATHI,
-        "Hindi": EDGE_TTS_VOICE_HINDI,
-        "Punjabi": EDGE_TTS_VOICE_PUNJABI,
-        "English": EDGE_TTS_VOICE_ENGLISH,
-        "Bengali": EDGE_TTS_VOICE_BENGALI,
-        "Gujarati": EDGE_TTS_VOICE_GUJARATI,
-        "Tamil": EDGE_TTS_VOICE_TAMIL,
-        "Telugu": EDGE_TTS_VOICE_TELUGU,
-        "Kannada": EDGE_TTS_VOICE_KANNADA,
-        "Malayalam": EDGE_TTS_VOICE_MALAYALAM,
-    }.get(language, EDGE_TTS_VOICE_ENGLISH)
-
-
-async def synthesize_speech_audio(text: str, language: str) -> dict[str, str]:
-    voice = edge_voice_for(language)
-    communicator = edge_tts.Communicate(text, voice=voice, rate="-2%")
-    audio_bytes = bytearray()
-
-    async for chunk in communicator.stream():
-        if chunk.get("type") == "audio":
-            audio_bytes.extend(chunk.get("data", b""))
-
-    if not audio_bytes:
-        raise HTTPException(status_code=502, detail="No audio returned by edge-tts")
-
-    return {
-        "audioBase64": base64.b64encode(bytes(audio_bytes)).decode("utf-8"),
-        "mimeType": "audio/mpeg",
-        "provider": EDGE_TTS_MODEL,
-        "voice": voice,
-    }
 
 
 def init_db() -> None:
@@ -626,14 +445,6 @@ def seasonal_baseline(crop: str) -> float:
     return round(sum(baseline) / len(baseline), 2)
 
 
-def get_summary_ndvi(record: DistrictRecord, crop: str) -> tuple[float, float]:
-    cached = LAST_KNOWN_MODIS.get(record.district)
-    if cached:
-        return float(cached["ndvi"]), float(cached["baseline"])
-    baseline = seasonal_baseline(crop)
-    return synthetic_ndvi(record, crop, 5, forced_stress=False), baseline
-
-
 async def load_modis_ndvi_palette() -> list[tuple[tuple[int, int, int], float]]:
     global MODIS_NDVI_PALETTE
     if MODIS_NDVI_PALETTE:
@@ -674,6 +485,8 @@ def decode_ndvi_from_rgb(rgb: tuple[int, int, int], palette: list[tuple[tuple[in
 
 
 async def fetch_modis_ndvi_value(record: DistrictRecord, target_date: date) -> float | None:
+    from PIL import Image
+
     params = {
         "SERVICE": "WMS",
         "REQUEST": "GetMap",
@@ -759,6 +572,46 @@ async def fetch_modis_ndvi(record: DistrictRecord, crop: str, forced_stress: boo
         "retrieved_on": today.isoformat(),
     }
     return ndvi_value, baseline, freshness_days, "nasa-gibs-modis-terra-ndvi-8day"
+
+
+async def fetch_summary_ndvi(record: DistrictRecord, crop: str) -> tuple[float, float, int, str]:
+    cached = LAST_KNOWN_MODIS.get(record.district)
+    if cached and cached.get("retrieved_on") == current_date().isoformat():
+        return (
+            float(cached["ndvi"]),
+            float(cached["baseline"]),
+            int(cached["freshness_days"]),
+            "nasa-gibs-modis-cache",
+        )
+
+    baseline = seasonal_baseline(crop)
+    latest_value: float | None = None
+    source_date: date | None = None
+    for offset in range(0, 5):
+        probe_date = current_date() - timedelta(days=offset)
+        latest_value = await fetch_modis_ndvi_value(record, probe_date)
+        if latest_value is not None:
+            source_date = probe_date
+            break
+
+    if latest_value is None or source_date is None:
+        if cached:
+            return (
+                float(cached["ndvi"]),
+                float(cached["baseline"]),
+                int(cached["freshness_days"]),
+                "nasa-gibs-modis-last-known-good",
+            )
+        return synthetic_ndvi(record, crop, 5, forced_stress=False), baseline, 999, "synthetic-fallback"
+
+    freshness_days = max(0, (current_date() - source_date).days)
+    LAST_KNOWN_MODIS[record.district] = {
+        "ndvi": latest_value,
+        "baseline": baseline,
+        "freshness_days": freshness_days,
+        "retrieved_on": current_date().isoformat(),
+    }
+    return latest_value, baseline, freshness_days, "nasa-gibs-modis-terra-ndvi-8day"
 
 
 def build_soil_snapshot(record: DistrictRecord, crop: str, weather: WeatherData, ndvi_score: float) -> dict[str, Any]:
@@ -1334,9 +1187,13 @@ async def advisory_generator(state: FarmPulseState) -> FarmPulseState:
 
 
 async def aggregate_state_risks() -> dict[str, Any]:
-    def build_row(record: DistrictRecord) -> dict[str, Any]:
+    cached_payload = AGGREGATE_CACHE.get("payload")
+    if cached_payload is not None and time.time() < float(AGGREGATE_CACHE.get("expires_at", 0.0)):
+        return cached_payload
+
+    async def build_row(record: DistrictRecord) -> dict[str, Any]:
         crop = record.primary_crop if record.primary_crop in SUPPORTED_CROPS else "Wheat"
-        ndvi, baseline = get_summary_ndvi(record, crop)
+        ndvi, baseline, freshness_days, ndvi_source = await fetch_summary_ndvi(record, crop)
         risk_score = round(min(94, max(22, 35 + abs(((ndvi - baseline) / baseline) * 100) * 1.45)))
         risk_level = map_risk_category(risk_score)
         return {
@@ -1351,10 +1208,12 @@ async def aggregate_state_risks() -> dict[str, Any]:
             "acreageLakh": record.acreage_lakh,
             "lat": record.lat,
             "lon": record.lon,
+            "dataFreshnessDays": freshness_days,
+            "ndviSource": ndvi_source,
             "updatedAt": now_iso(),
         }
 
-    district_rows = [build_row(record) for record in DISTRICT_DATA]
+    district_rows = await asyncio.gather(*(build_row(record) for record in DISTRICT_DATA))
     states: dict[str, list[dict[str, Any]]] = {}
     for row in district_rows:
         states.setdefault(row["state"], []).append(row)
@@ -1371,7 +1230,10 @@ async def aggregate_state_risks() -> dict[str, Any]:
                 "emergencyAlert": critical_count >= 3,
             }
         )
-    return {"districts": district_rows, "states": heatmap}
+    aggregate = {"districts": district_rows, "states": heatmap}
+    AGGREGATE_CACHE["payload"] = aggregate
+    AGGREGATE_CACHE["expires_at"] = time.time() + AGGREGATE_CACHE_TTL_SECONDS
+    return aggregate
 
 
 async def institutional_reporter(state: FarmPulseState) -> FarmPulseState:
@@ -1448,10 +1310,10 @@ async def human_escalation_node(state: FarmPulseState) -> FarmPulseState:
     return state
 
 
-async def run_pipeline(payload: AnalyzeRequest | FarmerQueryRequest) -> dict[str, Any]:
+async def run_pipeline(payload: AnalyzeRequest) -> dict[str, Any]:
     run_id = payload.run_id or str(uuid.uuid4())
     district_record = get_district_record(payload.district)
-    resolved_language = resolve_language(payload.language, payload.farmer_query, district_record.language)
+    resolved_language = normalize_language(payload.language, district_record.language)
     state = FarmPulseState(
         run_id=run_id,
         district=district_record.district,
@@ -1459,10 +1321,8 @@ async def run_pipeline(payload: AnalyzeRequest | FarmerQueryRequest) -> dict[str
         crop=payload.crop.title(),
         language=resolved_language,
         farmer_query=payload.farmer_query,
-        phone_type=payload.phone_type,
         data_freshness_days=12 if payload.edge_case == "data_staleness" else 5,
         edge_case=payload.edge_case,
-        input_source="voice-transcript" if payload.channel == "farmer" else "dashboard",
     )
     await emit_event(run_id, "Orchestrator", "start", "RUNNING", f"Starting analysis for {state.district}, {state.crop}")
     state = await satellite_scout(state)
@@ -1503,8 +1363,6 @@ async def run_pipeline(payload: AnalyzeRequest | FarmerQueryRequest) -> dict[str
         "soilSnapshot": state.soil_snapshot,
         "forecast5d": state.forecast_5d,
         "dataSources": state.data_sources,
-        "inputSource": state.input_source,
-        "voiceTranscript": state.farmer_query,
     }
 
 
@@ -1513,41 +1371,8 @@ async def health() -> dict[str, str]:
     return {"status": "ok", "service": "FarmPulse Agent Engine"}
 
 
-@app.post("/api/transcribe-audio")
-async def transcribe_audio(file: UploadFile = File(...), language: str = Form("Auto"), district: str = Form("Yavatmal")) -> dict[str, Any]:
-    audio_bytes = await file.read()
-    if not audio_bytes:
-        raise HTTPException(status_code=400, detail="Uploaded audio file is empty")
-    district_language = get_district_record(district).language
-    transcript, detected_language = await transcribe_audio_bytes(audio_bytes, file.filename or "voice-input.webm", language, district_language)
-    return {
-        "transcript": transcript,
-        "language": detected_language,
-        "detectedLanguage": detected_language,
-        "model": WHISPER_TRANSCRIBE_MODEL,
-        "provider": "local-whisper",
-    }
-
-
-class SpeechRequest(BaseModel):
-    text: str
-    language: str = "Marathi"
-
-
-@app.post("/api/synthesize-speech")
-async def synthesize_speech(request: SpeechRequest) -> dict[str, str]:
-    if not request.text.strip():
-        raise HTTPException(status_code=400, detail="Text is required for speech synthesis")
-    return await synthesize_speech_audio(request.text, request.language)
-
-
 @app.post("/api/analyze")
 async def analyze(request: AnalyzeRequest) -> dict[str, Any]:
-    return await run_pipeline(request)
-
-
-@app.post("/api/farmer-query")
-async def farmer_query(request: FarmerQueryRequest) -> dict[str, Any]:
     return await run_pipeline(request)
 
 
@@ -1560,7 +1385,6 @@ async def simulate_edge_case(request: EdgeCaseRequest) -> dict[str, Any]:
         farmer_query="Simulated edge case run",
         edge_case=request.scenario,
         run_id=request.run_id,
-        channel="farmer",
     )
     return await run_pipeline(payload)
 

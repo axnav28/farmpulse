@@ -23,8 +23,6 @@ const defaultAgentCards: AgentCardState[] = [
   { name: 'Institutional Reporting Agent', description: 'Packages auditable briefings for departments, FPOs, and insurers.', status: 'IDLE' },
 ];
 
-const trendLabels = ['Week 1', 'Week 2', 'Week 3', 'Week 4', 'Week 5'];
-
 function buildAgentStatuses(status: AgentStatus): Record<string, AgentStatus> {
   return Object.fromEntries(AGENT_NAMES.map((name) => [name, status])) as Record<string, AgentStatus>;
 }
@@ -45,11 +43,13 @@ export default function Overview() {
   }, []);
 
   const chartData = useMemo(() => {
-    const source = districtsData?.districts.slice(0, 5) ?? [];
-    return trendLabels.map((label, index) => ({
-      week: label,
-      ndvi: Number((0.76 - index * 0.04 - (source[index]?.riskScore ?? 0) / 500).toFixed(2)),
-    }));
+    return [...(districtsData?.districts ?? [])]
+      .sort((a, b) => b.riskScore - a.riskScore)
+      .slice(0, 5)
+      .map((district) => ({
+        district: district.district,
+        ndvi: Number(district.ndviScore.toFixed(2)),
+      }));
   }, [districtsData]);
 
   const priorityDistrict = useMemo(() => {
@@ -167,7 +167,7 @@ export default function Overview() {
         <div className="min-w-0 overflow-hidden rounded-3xl border border-border bg-surface-1 p-5 shadow-[0_16px_40px_rgba(20,44,31,0.08)]">
           <div className="mb-4 flex items-center justify-between">
             <h3 className="text-base font-semibold text-text-main">NDVI Trend Snapshot</h3>
-            <span className="text-xs uppercase tracking-[0.2em] text-text-muted">Pan-India seeded trend</span>
+            <span className="text-xs uppercase tracking-[0.2em] text-text-muted">Highest-risk districts from latest real scan</span>
           </div>
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
@@ -179,7 +179,7 @@ export default function Overview() {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="4 4" stroke="var(--border-color)" />
-                <XAxis dataKey="week" stroke="var(--text-muted)" />
+                <XAxis dataKey="district" stroke="var(--text-muted)" />
                 <YAxis domain={[0.4, 0.9]} stroke="var(--text-muted)" />
                 <Tooltip />
                 <Area type="monotone" dataKey="ndvi" stroke="#1f7a4d" strokeWidth={3} fill="url(#ndviFill)" />

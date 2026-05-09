@@ -11,7 +11,3 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
-      - key: WHISPER_DEVICE
-        value: cpu
-      - key: WHISPER_COMPUTE_TYPE
-        value: int8

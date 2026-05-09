@@ -13,6 +13,8 @@ export interface DistrictSummary {
   acreageLakh: number;
   lat: number;
   lon: number;
+  dataFreshnessDays: number;
+  ndviSource: string;
   updatedAt: string;
 }
 
@@ -114,8 +116,6 @@ export interface AnalysisResponse {
   soilSnapshot: SoilSnapshot;
   forecast5d: ForecastDay[];
   dataSources: string[];
-  inputSource: string;
-  voiceTranscript: string;
   institutionalOutputs: {
     heatmap: StateSummary[];
     fpoBriefing: DistrictSummary[];

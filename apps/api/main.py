@@ -235,6 +235,7 @@ LAST_KNOWN_MODIS: dict[str, dict[str, Any]] = {}
 RUN_QUEUES: dict[str, asyncio.Queue[str]] = {}
 MODIS_NDVI_PALETTE: list[tuple[tuple[int, int, int], float]] = []
 AGGREGATE_CACHE: dict[str, Any] = {"expires_at": 0.0, "payload": None}
+AGGREGATE_REFRESH_TASK: asyncio.Task[None] | None = None
 
 
 def seed_for(*parts: str) -> int:
@@ -337,6 +338,7 @@ def init_db() -> None:
 @app.on_event("startup")
 async def startup_event() -> None:
     init_db()
+    schedule_aggregate_refresh()
 
 
 def get_district_record(district_name: str) -> DistrictRecord:
@@ -612,6 +614,62 @@ async def fetch_summary_ndvi(record: DistrictRecord, crop: str) -> tuple[float, 
         "retrieved_on": current_date().isoformat(),
     }
     return latest_value, baseline, freshness_days, "nasa-gibs-modis-terra-ndvi-8day"
+
+
+def aggregate_cache_valid() -> bool:
+    return AGGREGATE_CACHE.get("payload") is not None and time.time() < float(AGGREGATE_CACHE.get("expires_at", 0.0))
+
+
+def schedule_aggregate_refresh() -> None:
+    global AGGREGATE_REFRESH_TASK
+    if AGGREGATE_REFRESH_TASK and not AGGREGATE_REFRESH_TASK.done():
+        return
+    AGGREGATE_REFRESH_TASK = asyncio.create_task(refresh_aggregate_cache())
+
+
+async def refresh_aggregate_cache() -> None:
+    district_rows = await asyncio.gather(*(build_aggregate_row(record) for record in DISTRICT_DATA))
+    states: dict[str, list[dict[str, Any]]] = {}
+    for row in district_rows:
+        states.setdefault(row["state"], []).append(row)
+    heatmap = []
+    for state_name, rows in states.items():
+        avg_risk = round(sum(item["riskScore"] for item in rows) / len(rows), 1)
+        critical_count = sum(1 for item in rows if item["riskLevel"] == "CRITICAL")
+        heatmap.append(
+            {
+                "state": state_name,
+                "avgRisk": avg_risk,
+                "criticalDistricts": critical_count,
+                "districtCount": len(rows),
+                "emergencyAlert": critical_count >= 3,
+            }
+        )
+    AGGREGATE_CACHE["payload"] = {"districts": district_rows, "states": heatmap}
+    AGGREGATE_CACHE["expires_at"] = time.time() + AGGREGATE_CACHE_TTL_SECONDS
+
+
+async def build_aggregate_row(record: DistrictRecord) -> dict[str, Any]:
+    crop = record.primary_crop if record.primary_crop in SUPPORTED_CROPS else "Wheat"
+    ndvi, baseline, freshness_days, ndvi_source = await fetch_summary_ndvi(record, crop)
+    risk_score = round(min(94, max(22, 35 + abs(((ndvi - baseline) / baseline) * 100) * 1.45)))
+    risk_level = map_risk_category(risk_score)
+    return {
+        "id": record.id,
+        "district": record.district,
+        "state": record.state,
+        "crop": crop,
+        "ndviScore": ndvi,
+        "baseline": baseline,
+        "riskScore": risk_score,
+        "riskLevel": risk_level,
+        "acreageLakh": record.acreage_lakh,
+        "lat": record.lat,
+        "lon": record.lon,
+        "dataFreshnessDays": freshness_days,
+        "ndviSource": ndvi_source,
+        "updatedAt": now_iso(),
+    }
 
 
 def build_soil_snapshot(record: DistrictRecord, crop: str, weather: WeatherData, ndvi_score: float) -> dict[str, Any]:
@@ -1187,53 +1245,21 @@ async def advisory_generator(state: FarmPulseState) -> FarmPulseState:
 
 
 async def aggregate_state_risks() -> dict[str, Any]:
-    cached_payload = AGGREGATE_CACHE.get("payload")
-    if cached_payload is not None and time.time() < float(AGGREGATE_CACHE.get("expires_at", 0.0)):
-        return cached_payload
+    if aggregate_cache_valid():
+        return AGGREGATE_CACHE["payload"]
 
-    async def build_row(record: DistrictRecord) -> dict[str, Any]:
-        crop = record.primary_crop if record.primary_crop in SUPPORTED_CROPS else "Wheat"
-        ndvi, baseline, freshness_days, ndvi_source = await fetch_summary_ndvi(record, crop)
-        risk_score = round(min(94, max(22, 35 + abs(((ndvi - baseline) / baseline) * 100) * 1.45)))
-        risk_level = map_risk_category(risk_score)
-        return {
-            "id": record.id,
-            "district": record.district,
-            "state": record.state,
-            "crop": crop,
-            "ndviScore": ndvi,
-            "baseline": baseline,
-            "riskScore": risk_score,
-            "riskLevel": risk_level,
-            "acreageLakh": record.acreage_lakh,
-            "lat": record.lat,
-            "lon": record.lon,
-            "dataFreshnessDays": freshness_days,
-            "ndviSource": ndvi_source,
-            "updatedAt": now_iso(),
-        }
+    if AGGREGATE_CACHE.get("payload") is not None:
+        schedule_aggregate_refresh()
+        return AGGREGATE_CACHE["payload"]
 
-    district_rows = await asyncio.gather(*(build_row(record) for record in DISTRICT_DATA))
-    states: dict[str, list[dict[str, Any]]] = {}
-    for row in district_rows:
-        states.setdefault(row["state"], []).append(row)
-    heatmap = []
-    for state_name, rows in states.items():
-        avg_risk = round(sum(item["riskScore"] for item in rows) / len(rows), 1)
-        critical_count = sum(1 for item in rows if item["riskLevel"] == "CRITICAL")
-        heatmap.append(
-            {
-                "state": state_name,
-                "avgRisk": avg_risk,
-                "criticalDistricts": critical_count,
-                "districtCount": len(rows),
-                "emergencyAlert": critical_count >= 3,
-            }
-        )
-    aggregate = {"districts": district_rows, "states": heatmap}
-    AGGREGATE_CACHE["payload"] = aggregate
-    AGGREGATE_CACHE["expires_at"] = time.time() + AGGREGATE_CACHE_TTL_SECONDS
-    return aggregate
+    task = AGGREGATE_REFRESH_TASK
+    if task and not task.done():
+        await task
+        if AGGREGATE_CACHE.get("payload") is not None:
+            return AGGREGATE_CACHE["payload"]
+
+    await refresh_aggregate_cache()
+    return AGGREGATE_CACHE["payload"]
 
 
 async def institutional_reporter(state: FarmPulseState) -> FarmPulseState:

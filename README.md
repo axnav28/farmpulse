@@ -1,12 +1,12 @@
-# FarmPulse AI
+# FarmPulse
 
-FarmPulse AI is an institutional crop-risk intelligence platform for Indian agriculture. The product vision is to detect crop stress early, before visible damage becomes obvious, and route those signals to the organizations that can act on them first: agriculture departments, insurers, FPOs, and field extension networks.
+FarmPulse is an institutional crop-risk intelligence platform for Indian agriculture. The product vision is to detect crop stress early, before visible damage becomes obvious, and route those signals to the organizations that can act on them first: agriculture departments, insurers, FPOs, and field extension networks.
 
 The implementation is centered on district-level early warning, institutional response workflows, and an auditable backend pipeline powered by real environmental data.
 
 ## Product Context
 
-FarmPulse AI is built around a simple operating assumption: many farmers should benefit from better crop intelligence without being forced to use an app, own a smartphone, or interact directly with a digital system.
+FarmPulse is built around a simple operating assumption: many farmers should benefit from better crop intelligence without being forced to use an app, own a smartphone, or interact directly with a digital system.
 
 Instead of building a farmer-first app workflow, the current product is designed around institutional delivery:
 
@@ -19,7 +19,7 @@ Instead of building a farmer-first app workflow, the current product is designed
 
 Indian agriculture often reacts to crop stress too late. By the time visible field damage is obvious, the best prevention window may already be narrowing. Broad advisories issued at district or state level are often not specific enough, while many technology-heavy solutions depend on farmer-side apps, devices, or workflows that do not scale cleanly across smallholder contexts.
 
-FarmPulse AI is intended to shift that model from reactive response to earlier institutional action.
+FarmPulse is intended to shift that model from reactive response to earlier institutional action.
 
 ## What Is Actually Implemented Today
 
@@ -184,4 +184,4 @@ The frontend expects the backend on `http://127.0.0.1:8000` during local develop
 
 ## Direction
 
-The broader FarmPulse AI vision still includes stronger farmer delivery channels, deeper field integrations, and larger-scale validation. This repository, however, should be understood as a focused institutional early-warning prototype with real data ingestion, explainable district analysis, and audit-ready operational outputs.
+The broader FarmPulse vision still includes stronger farmer delivery channels, deeper field integrations, and larger-scale validation. This repository, however, should be understood as a focused institutional early-warning prototype with real data ingestion, explainable district analysis, and audit-ready operational outputs.
